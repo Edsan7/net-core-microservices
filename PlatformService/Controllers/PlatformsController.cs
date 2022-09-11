@@ -3,20 +3,24 @@ using Microsoft.AspNetCore.Mvc;
 using PlatformService.Data;
 using PlatformService.Dtos;
 using PlatformService.Models;
+using PlatformService.SyncDataServices.Http;
 
 namespace PlatformService.Controllers
 {
     [ApiController]
-    [Route("api/{controller}/{action}")]
+    [Route("api/[controller]/[action]")]
     public class PlatformsController : ControllerBase
     {
         private readonly IPlatformRepo _repo;
         private readonly IMapper _mapper;
 
-        public PlatformsController(IPlatformRepo repo, IMapper mapper)
+        private ICommandDataClient _commandDataClient;
+
+        public PlatformsController(IPlatformRepo repo, IMapper mapper, ICommandDataClient commandDataClient)
         {
             _repo = repo;
             _mapper = mapper;
+            _commandDataClient = commandDataClient;
         }
 
 
@@ -37,7 +41,7 @@ namespace PlatformService.Controllers
         {
             var platformItem = _repo.GetPlatformById(id);
 
-            if(platformItem is null)
+            if (platformItem is null)
             {
                 return NotFound();
             }
@@ -46,21 +50,26 @@ namespace PlatformService.Controllers
         }
 
         [HttpPost]
-        public ActionResult<PlatformReadDto> CreatePlatform(PlatformCreateDto platformCreateDto)
+        public async Task<ActionResult<PlatformReadDto>> CreatePlatform(PlatformCreateDto platformCreateDto)
         {
             var platformModel = _mapper.Map<Platform>(platformCreateDto);
 
             _repo.CreatePlatform(platformModel);
+            _repo.SaveChanges();
 
-            if(_repo.SaveChanges())
+            var platformReadDto = _mapper.Map<PlatformReadDto>(platformModel);
+
+            try
             {
-                return CreatedAtAction(nameof(CreatePlatform), new { Id = platformModel.Id });
+                await _commandDataClient.SendPlatformToCommand(platformReadDto);
             }
-            else
+            catch (Exception ex)
             {
-                return BadRequest();
+
+                Console.WriteLine($"--> Cound not send synchronously: {ex.Message}");
             }
 
+            return CreatedAtRoute(nameof(CreatePlatform), new { Id = platformModel.Id });
         }
     }
 }
